@@ -1,0 +1,17 @@
+[
+{
+  "include": "subprocess/cpp-subprocess",
+  "interface_file": "subprocess/cpp-subprocess/subprocess.hpp",
+  "module_name": "subprocess"
+},
+{
+  "include": "argh",
+  "interface_file": "argh/argh.h",
+  "module_name": "argh"
+},
+{
+  "include": "nlohmann/include",
+  "interface_file": "nlohmann/src/modules/json.cppm",
+  "module_name": "nlohmann.json"
+}
+]

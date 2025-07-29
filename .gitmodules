@@ -1,0 +1,9 @@
+[submodule "deps/nlohmann"]
+	path = deps/nlohmann
+	url = https://github.com/nlohmann/json.git
+[submodule "deps/argh"]
+	path = deps/argh
+	url = git@github.com:DolphinGui/argh.git
+[submodule "deps/subprocess"]
+	path = deps/subprocess
+	url = git@github.com:DolphinGui/cpp-subprocess.git

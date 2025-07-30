@@ -9,16 +9,16 @@ dep_paths="$CRUN_DEPS:$src/deps"
 
 script=$(realpath $1)
 exe=$(basename $script .cpp)
-
+this_script=$(realpath $0)
+REGENERATE="${REGENERATE:-0}"
 mkdir -p "$CRUN_CACHE"
 pushd $CRUN_CACHE > /dev/null
 
-if [ ! -f "$CRUN_CACHE/$exe.ninja" ] || [ ! -t 1 ]; then
-
-if [ -t 1 ]; then
-  ninjafile="$exe.ninja"
-else
+if [ ! -f "$CRUN_CACHE/$exe.ninja" ] || [ ! "$REGENERATE" = 0 ]; then
+if [ ! "$REGENERATE" = 0 ]; then
   ninjafile="/dev/stdout"
+else
+  ninjafile="$exe.ninja"
 fi
 
 includes=""
@@ -28,12 +28,10 @@ for dep in $dep_paths; do
     includes="-I$dep/$include $includes"
   done
 done
-this_script=$(realpath $0)
-
 
 cat > $ninjafile  <<EOF
 
-cxxflags = -std=c++23 -fmodules -O2 -Wall -flto=auto -march=native
+cxxflags = -std=c++23 -fmodules -O3 -Wall -flto=auto -march=native
 
 rule cxx
   command = g++ \$cxxflags \$includes -x c++ -c \$in -o \$out
@@ -42,7 +40,7 @@ rule link
   command = g++ \$cxxflags \$in -o \$out
 
 rule regenerate_ninja
-  command = \$in $script > \$out
+  command = env REGENERATE=1 \$in $script > \$out
 
 build $exe.ninja : regenerate_ninja $this_script
 build regenerate : phony $exe.ninja
@@ -107,11 +105,11 @@ printf "default bin/$exe\n" >> $ninjafile
 
 fi
 
-if [ -t 1 ]; then
+if [ "$REGENERATE" = 0 ]; then
 ninja -f $exe.ninja --quiet
 ninja -f $exe.ninja -t compdb > compile_commands.json
 popd > /dev/null
-mv $CRUN_CACHE/compile_commands.json . || echo ""
+mv -f $CRUN_CACHE/compile_commands.json . || echo ""
 shift 1
 $CRUN_CACHE/bin/$exe $*
 fi

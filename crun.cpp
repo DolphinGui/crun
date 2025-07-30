@@ -14,6 +14,9 @@ void app(argh::parser args){
   if(args[{"-v", "--verbose"}]){
     std::println("verbose messaging");
   }
+  if(!args[1].empty()){
+    std::println("first argument: {}", args[1]);
+  }
 }
 
 

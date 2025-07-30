@@ -2,15 +2,25 @@
 
 set -euo pipefail
 
-mkdir -p $CRUN_CACHE/bin
-
 jaql=$(realpath $(dirname $0)/../jaql.py)
 src=$(realpath $(dirname $0))
 
 dep_paths="$CRUN_DEPS:$src/deps"
 
-script=$1
+script=$(realpath $1)
 exe=$(basename $script .cpp)
+
+mkdir -p "$CRUN_CACHE"
+pushd $CRUN_CACHE > /dev/null
+
+if [ ! -f "$CRUN_CACHE/$exe.ninja" ] || [ ! -t 1 ]; then
+
+if [ -t 1 ]; then
+  ninjafile="$exe.ninja"
+else
+  ninjafile="/dev/stdout"
+fi
+
 includes=""
 IFS=':'
 for dep in $dep_paths; do
@@ -18,10 +28,10 @@ for dep in $dep_paths; do
     includes="-I$dep/$include $includes"
   done
 done
+this_script=$(realpath $0)
 
-pushd $CRUN_CACHE
 
-cat > $exe.ninja <<EOF
+cat > $ninjafile  <<EOF
 
 cxxflags = -std=c++23 -fmodules -O2 -Wall -flto=auto -march=native
 
@@ -30,6 +40,13 @@ rule cxx
 
 rule link
   command = g++ \$cxxflags \$in -o \$out
+
+rule regenerate_ninja
+  command = \$in $script > \$out
+
+build $exe.ninja : regenerate_ninja $this_script
+build regenerate : phony $exe.ninja
+
 EOF
 
 objects=""
@@ -37,9 +54,10 @@ files_done=""
 output_rule()
 {
 local target_file=$1
+local obj=$(basename $target_file)
 local includes=$2
 local dep_info=$(g++ -std=c++23 -fmodules -fdeps-format=p1689r5 -fdeps-file=- \
-  -fdeps-target="$target_file.o" -xc++ -MM -MG -MF /dev/null "$target_file")
+  -fdeps-target="$obj.o" -xc++ -MM -MG -MF /dev/null "$target_file")
 local dep_mods=$(echo "$dep_info" | $jaql "(.'rules'*.'requires'*.'logical-name')++" || echo "")
 local output_gcm=$(echo "$dep_info" | $jaql "(.'rules'*.'provides'*.'logical-name')++" | \
               sed -nE "s/(:?\s|^)(\S+)/gcm.cache\/\2.gcm /pg" || echo "")
@@ -64,9 +82,8 @@ for dep in $dep_mods; do
 done
 local dep_gcms=$(echo "$dep_mods" | sed -E "s/(:?\s|^)(\S+)/gcm.cache\/\2.gcm /g")
 # do not output duplicate rules
-local obj=$(basename $target_file)
-if grep -q "build $obj.o" $exe.ninja; then return; fi
-printf "build $obj.o | $output_gcm: cxx $target_file | $dep_gcms\n  includes = $includes\n" >> $exe.ninja
+if grep -q "build $obj.o" $exe.ninja ; then return; fi
+printf "build $obj.o | $output_gcm: cxx $target_file | $dep_gcms\n  includes = $includes\n" >> $ninjafile 
 target=$(basename $target_file)
 objects="$target.o $objects"
 }
@@ -80,17 +97,21 @@ for mod in $stdmod; do
   srcpath=$(echo "$mod" | $jaql ".'source-path'")
   srcfile=$(basename $srcpath)
   path=$(realpath $basepath/$srcpath)
-  echo "build $srcfile.o | gcm.cache/$modname.gcm: cxx $path" >> $exe.ninja
+  echo "build $srcfile.o | gcm.cache/$modname.gcm: cxx $path" >> $ninjafile 
 done
 
-output_rule $src/$script ""
+output_rule "$script" ""
 
-printf "build bin/$exe: link std.cc.o $objects\n" >> $exe.ninja
-printf "default bin/$exe\n" >> $exe.ninja
-ninja -f $exe.ninja
+printf "build bin/$exe: link std.cc.o $objects\n" >> $ninjafile 
+printf "default bin/$exe\n" >> $ninjafile 
+
+fi
+
+if [ -t 1 ]; then
+ninja -f $exe.ninja --quiet
 ninja -f $exe.ninja -t compdb > compile_commands.json
-popd
-mv $CRUN_CACHE/compile_commands.json .
+popd > /dev/null
+mv $CRUN_CACHE/compile_commands.json . || echo ""
 shift 1
 $CRUN_CACHE/bin/$exe $*
-
+fi

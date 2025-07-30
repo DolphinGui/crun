@@ -21,57 +21,76 @@ done
 
 pushd $CRUN_CACHE
 
-# module dependencies of script
-dep_mods=$(g++ -std=c++23 -fmodules -fdeps-format=p1689r5 -fdeps-file=- \
-  -fdeps-target="$script.o" -MM -MG -MF /dev/null "$src/$script" | $jaql "(.'rules'*.'requires'*.'logical-name')++")
+cat > $exe.ninja <<EOF
 
-dep_gcms=""
-IFS=' '
-for dep in $dep_mods; do
-  dep_gcms="gcm.cache/$dep.gcm $dep_gcms"
-done
-
-cat <<EOF > $exe.ninja
-
-cxxflags = -std=c++23 -fmodules -O3 -flto=auto -Wall -march=native
+cxxflags = -std=c++23 -fmodules -O2 -Wall -flto=auto -march=native
 
 rule cxx
-  command = g++ \$cxxflags \$includes -fsearch-include-path -x c++ -c \$in -o \$out
-
-rule gen_std
-  command = g++ \$cxxflags \$includes -fsearch-include-path -c bits/std.cc -o \$out
-
-build std.o | gcm.cache/std.gcm: gen_std
+  command = g++ \$cxxflags \$includes -x c++ -c \$in -o \$out
 
 rule link
   command = g++ \$cxxflags \$in -o \$out
 EOF
 
 objects=""
+files_done=""
+output_rule()
+{
+local target_file=$1
+local includes=$2
+local dep_info=$(g++ -std=c++23 -fmodules -fdeps-format=p1689r5 -fdeps-file=- \
+  -fdeps-target="$target_file.o" -xc++ -MM -MG -MF /dev/null "$target_file")
+local dep_mods=$(echo "$dep_info" | $jaql "(.'rules'*.'requires'*.'logical-name')++" || echo "")
+local output_gcm=$(echo "$dep_info" | $jaql "(.'rules'*.'provides'*.'logical-name')++" | \
+              sed -nE "s/(:?\s|^)(\S+)/gcm.cache\/\2.gcm /pg" || echo "")
+files_done="$1 $files_done"
 IFS=' '
 for dep in $dep_mods; do
-  if [ $dep = "std" ]; then
-    continue
-  fi
-  IFS=':';
-  finished=""
+  if echo "$dep" | grep -q "std"; then continue; fi;
+  IFS=':'
   for dep_path in $dep_paths; do
-    info=$(cat $dep_path/deps.json | $jaql "*?='$dep'.'module_name'" || echo "")
+    local info=$(cat $dep_path/deps.json | $jaql "(*?='$dep'.'module_name')!^" || echo "")
     if [ "$info" = "" ]; then continue; fi;
-    include=$($jaql ".'include'" "$info")
-    interface=$($jaql ".'interface_file'" "$info")
-    printf "build $dep.o | gcm.cache/$dep.gcm: cxx $dep_path/$interface\n  includes = -I $dep_path/$include\n" >> $exe.ninja
-    objects="$dep.o $objects"
-    finished="done"
+    local files=$(echo "$info" | $jaql ".'file'" --seperator=':')
+    local include=$(echo "$info" | $jaql ".'include'")
+    IFS=':'
+    for file in $files; do
+      if ! echo "$files_done" | grep -q "$file"; then
+        output_rule "$dep_path/$file" "-I$dep_path/$include"
+      fi
+    done
     break;
   done
-  if [ finished = "" ]; then exit 1; fi;
 done
-printf "build $script.o: cxx $src/$script | $dep_gcms\n  includes = $includes\n" >> $exe.ninja
-printf "build bin/$exe: link $script.o std.o $objects\n" >> $exe.ninja
+local dep_gcms=$(echo "$dep_mods" | sed -E "s/(:?\s|^)(\S+)/gcm.cache\/\2.gcm /g")
+# do not output duplicate rules
+local obj=$(basename $target_file)
+if grep -q "build $obj.o" $exe.ninja; then return; fi
+printf "build $obj.o | $output_gcm: cxx $target_file | $dep_gcms\n  includes = $includes\n" >> $exe.ninja
+target=$(basename $target_file)
+objects="$target.o $objects"
+}
+
+stdjson=$(gcc -print-file-name=libstdc++.modules.json)
+stdmod=$(cat $stdjson | $jaql ".'modules'*" --seperator=';')
+IFS=';'
+for mod in $stdmod; do
+  modname=$(echo "$mod" | $jaql ".'logical-name'")
+  basepath=$(dirname $stdjson)
+  srcpath=$(echo "$mod" | $jaql ".'source-path'")
+  srcfile=$(basename $srcpath)
+  path=$(realpath $basepath/$srcpath)
+  echo "build $srcfile.o | gcm.cache/$modname.gcm: cxx $path" >> $exe.ninja
+done
+
+output_rule $src/$script ""
+
+printf "build bin/$exe: link std.cc.o $objects\n" >> $exe.ninja
+printf "default bin/$exe\n" >> $exe.ninja
 ninja -f $exe.ninja
 ninja -f $exe.ninja -t compdb > compile_commands.json
 popd
 mv $CRUN_CACHE/compile_commands.json .
 shift 1
 $CRUN_CACHE/bin/$exe $*
+

@@ -5,16 +5,19 @@ set -euo pipefail
 jaql=$(realpath $(dirname $0)/../jaql.py)
 src=$(realpath $(dirname $0))
 
-dep_paths="$CRUN_DEPS:$src/deps"
+global_deps="${CRUN_DEPS:-}"
+cache_dir="${CRUN_CACHE:-$HOME/.cache/crun}"
+dep_paths="$global_deps:$src/deps"
+
 
 script=$(realpath $1)
 exe=$(basename $script .cpp)
 this_script=$(realpath $0)
 REGENERATE="${REGENERATE:-0}"
-mkdir -p "$CRUN_CACHE"
-pushd $CRUN_CACHE > /dev/null
+mkdir -p "$cache_dir"
+pushd $cache_dir > /dev/null
 
-if [ ! -f "$CRUN_CACHE/$exe.ninja" ] || [ ! "$REGENERATE" = 0 ]; then
+if [ ! -f "$cache_dir/$exe.ninja" ] || [ ! "$REGENERATE" = 0 ]; then
 if [ ! "$REGENERATE" = 0 ]; then
   ninjafile="/dev/stdout"
 else
@@ -109,7 +112,7 @@ if [ "$REGENERATE" = 0 ]; then
 ninja -f $exe.ninja --quiet
 ninja -f $exe.ninja -t compdb > compile_commands.json
 popd > /dev/null
-mv -f $CRUN_CACHE/compile_commands.json . || echo ""
+mv -f $cache_dir/compile_commands.json . || echo ""
 shift 1
-$CRUN_CACHE/bin/$exe $*
+$cache_dir/bin/$exe $*
 fi

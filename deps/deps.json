@@ -1,22 +1,27 @@
 [
 {
-  "include": "subprocess/cpp-subprocess",
-  "file": ["subprocess/cpp-subprocess/subprocess.hpp"],
+  "include": "subprocess",
+  "sources": ["subprocess/module.cpp"],
   "module_name": "subprocess"
 },
 {
-  "include": "argh",
-  "file": ["argh/argh.h"],
-  "module_name": "argh"
-},
-{
   "include": "nlohmann/include",
-  "file": ["nlohmann/src/modules/json.cppm"],
+  "sources": ["nlohmann/src/modules/json.cppm"],
   "module_name": "nlohmann.json"
 },
 {
   "include": "appmain",
-  "file": ["appmain/app.cpp", "appmain/main.cpp"],
-  "module_name": "app"
+  "sources": ["appmain/app.cpp", "appmain/main.cpp"],
+  "module_name": "appmain"
+},
+{
+  "include": "clip/include",
+   "sources": ["clip/src/clip_module.cpp"],
+   "module_name": "clip"
+},
+{
+  "include": "tuplet/include",
+  "sources": ["module_shims/tuplet_mod.cpp"],
+  "module_name": "tuplet"
 }
 ]

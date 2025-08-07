@@ -1,13 +1,8 @@
-module;
+export module appmain;
 
-// main can't be a part of a module,
-// but we define it inside of this
-// dependency so it's declared here
-int main(int argc, char* argv[]);
+export import clip;
 
-export module app;
-
-export import argh;
-
-export void app(argh::parser);
-
+/* This is a dummy library that exists to pull in main.cpp, which actually
+ * contains main. The application must define and export app on their own, since
+ * they have access to the Parser type. The App must define a app::CliParser variable
+ * and export it. */

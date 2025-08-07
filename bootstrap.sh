@@ -37,7 +37,7 @@ cat > $ninjafile  <<EOF
 cxxflags = -std=c++23 -fmodules -O3 -Wall -flto=auto -march=native
 
 rule cxx
-  command = g++ \$cxxflags \$includes -x c++ -c \$in -o \$out
+  command = g++ \$cxxflags \$includes \$depflags -x c++ -c \$in -o \$out
 
 rule link
   command = g++ \$cxxflags \$in -o \$out
@@ -58,7 +58,7 @@ local target_file=$1
 local obj=$(basename $target_file)
 local includes=$2
 local dep_info=$(g++ -std=c++23 -fmodules -fdeps-format=p1689r5 -fdeps-file=- \
-  -fdeps-target="$obj.o" -xc++ -MM -MG -MF /dev/null "$target_file")
+  -fdeps-target="$obj.o" -xc++ -MM -MF /dev/null "$target_file" $includes)
 local dep_mods=$(echo "$dep_info" | $jaql "(.'rules'*.'requires'*.'logical-name')++" || echo "")
 local output_gcm=$(echo "$dep_info" | $jaql "(.'rules'*.'provides'*.'logical-name')++" | \
               sed -nE "s/(:?\s|^)(\S+)/gcm.cache\/\2.gcm /pg" || echo "")
@@ -70,7 +70,7 @@ for dep in $dep_mods; do
   for dep_path in $dep_paths; do
     local info=$(cat $dep_path/deps.json | $jaql "(*?='$dep'.'module_name')!^" || echo "")
     if [ "$info" = "" ]; then continue; fi;
-    local files=$(echo "$info" | $jaql ".'file'" --seperator=':')
+    local files=$(echo "$info" | $jaql ".'sources'" --seperator=':')
     local include=$(echo "$info" | $jaql ".'include'")
     IFS=':'
     for file in $files; do
@@ -84,7 +84,12 @@ done
 local dep_gcms=$(echo "$dep_mods" | sed -E "s/(:?\s|^)(\S+)/gcm.cache\/\2.gcm /g")
 # do not output duplicate rules
 if grep -q "build $obj.o" $exe.ninja ; then return; fi
-printf "build $obj.o | $output_gcm: cxx $target_file | $dep_gcms\n  includes = $includes\n" >> $ninjafile 
+printf "build $obj.o | $output_gcm: cxx $target_file | $dep_gcms\n  includes = $includes\n" >> $ninjafile
+if [ ! -z "$includes" ]; then
+  depfile="$obj.d"
+  printf "  depflags = -MD -Mno-modules -MQ $obj.o -MF $depfile\n" >> $ninjafile
+  printf "  deps = gcc\n  depfile = $depfile\n" >> $ninjafile
+fi
 target=$(basename $target_file)
 objects="$target.o $objects"
 }
@@ -98,19 +103,23 @@ for mod in $stdmod; do
   srcpath=$(echo "$mod" | $jaql ".'source-path'")
   srcfile=$(basename $srcpath)
   path=$(realpath $basepath/$srcpath)
-  echo "build $srcfile.o | gcm.cache/$modname.gcm: cxx $path" >> $ninjafile 
+  dep=""
+  if [ "$modname" = "std.compat" ]; then
+    dep="gcm.cache/std.gcm"
+  fi
+  echo "build $srcfile.o | gcm.cache/$modname.gcm: cxx $path | $dep" >> $ninjafile
 done
 
 output_rule "$script" ""
 
-printf "build bin/$exe: link std.cc.o $objects\n" >> $ninjafile 
+printf "build bin/$exe: link $objects std.cc.o\n" >> $ninjafile
 printf "default bin/$exe\n" >> $ninjafile 
 
 fi
 
 if [ "$REGENERATE" = 0 ]; then
 ninja -f $exe.ninja --quiet
-ninja -f $exe.ninja -t compdb > compile_commands.json
+ninja -f $exe.ninja -t compdb cxx > compile_commands.json
 popd > /dev/null
 mv -f $cache_dir/compile_commands.json . || echo ""
 shift 1

@@ -40,6 +40,9 @@ int main(int argc, char *argv[]) {
 
 void app(Args const &args) {
   auto &[help, run] = args;
+  auto const &[run_help, script] = run.value_or({});
   if (help)
     std::println("Help asked for!");
+  if (run_help)
+    std::println("Run help asked for!");
 }

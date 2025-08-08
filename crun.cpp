@@ -1,11 +1,14 @@
-#include <unistd.h>
+#include <cstdio>
 #include <sys/ioctl.h>
+#include <unistd.h>
 
 import std;
 
 import subprocess;
 import nlohmann.json;
 import clip;
+
+using json = nlohmann::json;
 
 using clip::Argument;
 using clip::Command;
@@ -15,6 +18,8 @@ using clip::positional;
 using clip::Subcommand;
 
 using Str = std::string;
+
+namespace fs = std::filesystem;
 
 namespace sp = subprocess;
 using json = nlohmann::json;
@@ -48,7 +53,8 @@ constexpr auto build =
         .arg(Argument<bool, flag, none, "rebuild",
                       "Forcibly rebuilds everything">{})
         .arg(Argument<bool, flag, none, "configure",
-                      "Only configures instead of building anything">{});
+                      "Only configures instead of building anything">{})
+        .arg(Argument<Str, positional, none, "script", "Script to build">{});
 
 constexpr auto reg =
     Subcommand<"reg", "register", "Registers a command into PATH">{}
@@ -86,19 +92,47 @@ int main(int argc, char *argv[]) {
     app(cli_parser.parse(argc, argv));
   } catch (std::runtime_error const &e) {
     std::println("Caught error: {}", e.what());
+    return 2;
+  } catch (Str const &s) {
+    std::puts(s.c_str());
+    return 1;
   }
 }
 
-void run_cmd(auto const &, int col);
-void build_cmd(auto const &, int col);
-void register_cmd(auto const &, int col);
-void completions_cmd(auto const &, int col);
-void bin_cmd(auto const &, int col);
+void run_cmd(auto const &, std::size_t col);
+void build_cmd(auto const &, std::size_t col);
+void register_cmd(auto const &, std::size_t col);
+void completions_cmd(auto const &, std::size_t col);
+void bin_cmd(auto const &);
+
+fs::path cache_dir();
+
+namespace lg {
+size_t level = 0;
+template <typename... Args>
+constexpr void error(std::format_string<Args...> fmt, Args &&...args) {
+  if (level >= 0)
+    std::println(stderr, "ERROR: {}",
+                 std::format(fmt, std::forward<Args>(args)...));
+}
+template <typename... Args>
+constexpr void warn(std::format_string<Args...> fmt, Args &&...args) {
+  if (level >= 1)
+    std::println(stderr, "WARNING: {}",
+                 std::format(fmt, std::forward<Args>(args)...));
+}
+template <typename... Args>
+constexpr void INFO(std::format_string<Args...> fmt, Args &&...args) {
+  if (level >= 2)
+    std::println(stderr, "INFO: {}",
+                 std::format(fmt, std::forward<Args>(args)...));
+}
+} // namespace lg
 
 void app(Args const &args) {
   auto &[help, ru, bu, re, co, bi] = args;
   // todo crossplatform?
-  struct winsize w;
+  winsize w;
   ioctl(STDOUT_FILENO, TIOCGWINSZ, &w);
   if (help)
     std::println("Help asked for!");
@@ -111,31 +145,161 @@ void app(Args const &args) {
   if (co)
     completions_cmd(*co, w.ws_col);
   if (bi)
-    bin_cmd(*bi, w.ws_col);
+    bin_cmd(*bi);
 }
-void run_cmd(auto const &args, int col) {
+
+void run_cmd(auto const &args, std::size_t col) {
   auto &[help, script, verbosity, compdb, compdb_path] = args;
   if (help) {
     auto h = run.help({.cols = col});
     std::puts(h.c_str());
+    return;
   }
-  if (verbosity > 0)
-    std::println("Verbosity level at {}", verbosity);
+  lg::level = verbosity;
 }
-void build_cmd(auto const &args, int col) {
+
+constexpr std::string_view ninja_prologue = R"(
+cxxflags = -std=c++23 -fmodules -O3 -Wall -flto=auto -march=native
+
+rule cxx
+  command = g++ $cxxflags $includes $depflags -x c++ -c $in -o $out
+
+rule link
+  command = g++ $cxxflags $in -o $out
+
+rule regenerate_ninja
+  command = crun build --configure $in
+
+)";
+
+void scan_deps(auto out, fs::path);
+void output_rule(auto out, fs::path src, std::string_view include);
+
+void build_cmd(auto const &args, std::size_t col) {
   auto &[help, verbosity, output, flags, compdb, compdb_path, rebuild,
-         configure] = args;
-  if (help)
-    std::println("Build help asked for");
+         configure, script] = args;
+  if (help) {
+    auto h = build.help({.cols = col});
+    std::puts(h.c_str());
+    return;
+  }
+  lg::level = verbosity;
+  if (script.empty()) {
+    throw Str("Specify a script to build");
+  }
+
+  auto ninjafile = Str(ninja_prologue);
+  auto ninja = std::back_inserter(ninjafile);
+  fs::path cache = cache_dir();
+  fs::path cwd = fs::current_path();
+  auto ninja_path = cache / cwd.relative_path() / script;
+  ninja_path.replace_extension(".ninja");
+
+  std::format_to(ninja, "build | {}: regenerate_ninja {}\n",
+                 ninja_path.string(), (cwd / script).string());
+
+  auto deps = std::string_view(std::getenv("CRUN_DEPS"));
+  auto root = std::getenv("CRUN_ROOT");
+  scan_deps(ninja, fs::path(root) / "deps");
+
+  output_rule(ninja, cwd / script, "-I.");
+
+  auto output_name = output.empty() ? fs::path(script).stem().string() : output;
+
+  auto obj = cache / cwd.relative_path() / script;
+  obj += ".o";
+
+  auto out_name = (cache / cwd.relative_path() / output_name).string();
+  std::format_to(ninja, "link {}: {}\n", out_name, obj.string());
+  std::format_to(ninja, "default {}\n", out_name);
+
+  std::puts(ninjafile.c_str());
 }
-void register_cmd(auto const &args, int col) {
+
+void scan_deps(auto out, fs::path depdir) {
+  auto depfile = depdir / "deps.json";
+  if (not fs::exists(depfile))
+    throw Str(std::format("Expected deps.json at {}", depfile.string()));
+
+  std::ifstream f(depfile);
+  json deps = json::parse(f);
+
+  // could probably be parallelized for large amounts of dependencies
+  for (auto const &dep : deps) {
+    auto sources = dep["sources"];
+    auto includes = depdir / std::string(dep["include"]);
+    auto include_str = "-I" + includes.string();
+    for (auto const &src : sources) {
+      output_rule(out, depdir / Str(src), include_str);
+    }
+  }
+}
+
+void output_rule(auto out, fs::path src, std::string_view include) {
+  auto filepath = src.string();
+  auto deps = sp::check_output({"g++", "-std=c++23", "-fmodules",
+                                "-fdeps-format=p1689r5", "-fdeps-file=-",
+                                "-xc++", "-MM", "-MF", "/dev/null",
+                                filepath.c_str(), include.data()});
+  auto depjson = json::parse(deps.buf);
+  auto rules = depjson["rules"];
+  if (rules.size() != 1)
+    throw std::runtime_error("Schema of p1689r5 json is invalid");
+  auto req = rules[0]["requires"];
+  auto prov = rules[0]["provides"];
+  std::format_to(out, "build {}.o",
+                 (cache_dir() / src.relative_path()).string());
+  if (prov.size() > 0) {
+    std::format_to(out, " | ");
+    for (auto const &p : prov) {
+      std::format_to(out, "gcm.cache/{}.gcm ", Str(p["logical-name"]));
+    }
+  }
+  std::format_to(out, " : {} ", filepath);
+  if (req.size() > 0) {
+    std::format_to(out, " | ");
+    for (auto const &r : req) {
+      std::format_to(out, "gcm.cache/{}.gcm ", Str(r["logical-name"]));
+    }
+  }
+  std::format_to(out, "\n\n");
+}
+
+void register_cmd(auto const &args, std::size_t col) {
   auto &[help, name, impl_args, del, list] = args;
-  if (help)
-    std::println("Register help asked for");
+  if (help) {
+    auto h = reg.help({.cols = col});
+    std::puts(h.c_str());
+    return;
+  }
 }
-void completions_cmd(auto const &args, int col) {
+void completions_cmd(auto const &args, std::size_t col) {
   auto &[help, shell] = args;
-  if (help)
-    std::println("Completion help asked for");
+  if (help) {
+    auto h = comp.help({.cols = col});
+    std::puts(h.c_str());
+    return;
+  }
 }
-void bin_cmd(auto const &args, int col) {}
+void bin_cmd(auto const &args) {}
+
+fs::path cache_dir() {
+  // no need to redo this all the time,
+  // and this probably won't change mid-execution
+  static std::optional<fs::path> cached;
+  if (cached.has_value())
+    return *cached;
+  const char *cachepath = std::getenv("CRUN_CACHE");
+  if (cachepath == nullptr || *cachepath == '\0') {
+    const char *xdg_cache = std::getenv("XDG_CACHE_HOME");
+    const char *home = std::getenv("HOME");
+    if (xdg_cache == nullptr || *xdg_cache == '\0') {
+      if (home == nullptr || *home == '\0')
+        throw std::runtime_error("HOME is null for some reason");
+      cached = fs::path(home) / ".cache";
+    } else {
+      cached = fs::path(xdg_cache);
+    }
+  }
+  return *cached;
+}

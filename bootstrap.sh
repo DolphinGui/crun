@@ -33,7 +33,7 @@ for dep in $dep_paths; do
 done
 
 cat > $ninjafile  <<EOF
-
+#shellgen
 cxxflags = -std=c++23 -fmodules -O3 -Wall -flto=auto -march=native
 
 rule cxx
@@ -43,9 +43,9 @@ rule link
   command = g++ \$cxxflags \$in -o \$out
 
 rule regenerate_ninja
-  command = env REGENERATE=1 \$in $script > \$out
+  command = env REGENERATE=1 \$in > \$out
 
-build $exe.ninja : regenerate_ninja $this_script
+build $exe.ninja : regenerate_ninja $this_script $script
 build regenerate : phony $exe.ninja
 
 EOF

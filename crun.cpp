@@ -300,9 +300,18 @@ void register_cmd(auto const &args, std::size_t col) {
   auto binary = (cache_dir() / script.relative_path()).replace_extension("");
   auto ninja = binary;
   ninja.replace_extension(".ninja");
-  std::format_to(reg, "if [ ! -f {} ]; then crun build --configure {}; fi\n",
-                 ninja.string(), script.string());
-  std::format_to(reg, "ninja --quiet -f {}\n", ninja.string());
+  if (shim_name != "crun") {
+    std::format_to(reg,
+                   "if [ ! -f {} ];then\n crun build --configure {};\nfi\n",
+                   ninja.string(), script.string());
+  } else {
+    auto root = script.parent_path();
+    std::format_to(
+        reg, "if [ ! -f {0} ];then\n {1}/bootstrap.sh {1}/crun.cpp;\nfi\n",
+        ninja.string(), root.string());
+  }
+  std::format_to(reg, "ninja --quiet -C {} -f {}\n", cache_dir().string(),
+                 ninja.string());
   std::format_to(reg, "{} $@ ", binary.string());
   for (auto const &arg : impl_args) {
     std::format_to(reg, "{} ", arg);
@@ -327,29 +336,22 @@ void bin_cmd(auto const &args) {
 }
 
 fs::path cache_dir() {
-  // no need to redo this all the time,
-  // and this probably won't change mid-execution
   static std::optional<fs::path> cached;
   if (cached.has_value())
     return *cached;
   const char *cachepath = std::getenv("CRUN_CACHE");
   if (cachepath == nullptr || *cachepath == '\0') {
-    const char *xdg_cache = std::getenv("XDG_CACHE_HOME");
     const char *home = std::getenv("HOME");
-    if (xdg_cache == nullptr || *xdg_cache == '\0') {
-      if (home == nullptr || *home == '\0')
-        throw std::runtime_error("HOME is null for some reason");
-      cached = fs::path(home) / ".cache" / "crun";
-    } else {
-      cached = fs::path(xdg_cache) / "crun";
-    }
+    if (home == nullptr || *home == '\0')
+      throw std::runtime_error("HOME is null for some reason");
+    auto path = fs::path(home) / ".crun_cache";
+    cached = std::move(path);
   }
+
   return *cached;
 }
 
 fs::path config_dir() {
-  // no need to redo this all the time,
-  // and this probably won't change mid-execution
   static std::optional<fs::path> cached;
   if (cached.has_value())
     return *cached;

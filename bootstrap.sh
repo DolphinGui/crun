@@ -6,7 +6,7 @@ jaql=$(realpath $(dirname $0)/../jaql.py)
 src=$(realpath $(dirname $0))
 
 global_deps="${CRUN_DEPS:-}"
-cache_dir="${CRUN_CACHE:-$HOME/.cache/crun}"
+cache_dir="${CRUN_CACHE:-$HOME/.crun_cache}"
 dep_paths="$global_deps:$src/deps"
 
 

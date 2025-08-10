@@ -11,10 +11,10 @@ dep_paths="$global_deps:$src/deps"
 
 
 script=$(realpath $1)
-exe=$(basename $script .cpp)
+exe="./${script%.*}"
 this_script=$(realpath $0)
 REGENERATE="${REGENERATE:-0}"
-mkdir -p "$cache_dir"
+mkdir -p $(dirname "$cache_dir/$exe")
 pushd $cache_dir > /dev/null
 
 if [ ! -f "$cache_dir/$exe.ninja" ] || [ ! "$REGENERATE" = 0 ]; then
@@ -55,10 +55,11 @@ files_done=""
 output_rule()
 {
 local target_file=$1
-local obj=$(basename $target_file)
 local includes=$2
+local base=$(basename "$target_file")
+local output="./$target_file.o"
 local dep_info=$(g++ -std=c++23 -fmodules -fdeps-format=p1689r5 -fdeps-file=- \
-  -fdeps-target="$obj.o" -xc++ -MM -MF /dev/null "$target_file" $includes)
+                -xc++ -MM -MF /dev/null "$target_file" $includes)
 local dep_mods=$(echo "$dep_info" | $jaql "(.'rules'*.'requires'*.'logical-name')++" || echo "")
 local output_gcm=$(echo "$dep_info" | $jaql "(.'rules'*.'provides'*.'logical-name')++" | \
               sed -nE "s/(:?\s|^)(\S+)/gcm.cache\/\2.gcm /pg" || echo "")
@@ -70,9 +71,9 @@ for dep in $dep_mods; do
   for dep_path in $dep_paths; do
     local info=$(cat $dep_path/deps.json | $jaql "(*?='$dep'.'module_name')!^" || echo "")
     if [ "$info" = "" ]; then continue; fi;
-    local files=$(echo "$info" | $jaql ".'sources'" --seperator=':')
+    local files=$(echo "$info" | $jaql ".'sources'" --seperator='$')
     local include=$(echo "$info" | $jaql ".'include'")
-    IFS=':'
+    IFS='$'
     for file in $files; do
       if ! echo "$files_done" | grep -q "$file"; then
         output_rule "$dep_path/$file" "-I$dep_path/$include"
@@ -83,15 +84,13 @@ for dep in $dep_mods; do
 done
 local dep_gcms=$(echo "$dep_mods" | sed -E "s/(:?\s|^)(\S+)/gcm.cache\/\2.gcm /g")
 # do not output duplicate rules
-if grep -q "build $obj.o" $exe.ninja ; then return; fi
-printf "build $obj.o | $output_gcm: cxx $target_file | $dep_gcms\n  includes = $includes\n" >> $ninjafile
+printf "build $output | $output_gcm: cxx $target_file | $dep_gcms\n  includes = $includes\n" >> $ninjafile
 if [ ! -z "$includes" ]; then
-  depfile="$obj.d"
-  printf "  depflags = -MD -Mno-modules -MQ $obj.o -MF $depfile\n" >> $ninjafile
+  depfile="$base.d"
+  printf "  depflags = -MD -Mno-modules -MQ $base.o -MF $depfile\n" >> $ninjafile
   printf "  deps = gcc\n  depfile = $depfile\n" >> $ninjafile
 fi
-target=$(basename $target_file)
-objects="$target.o $objects"
+objects="$output $objects"
 }
 
 stdjson=$(gcc -print-file-name=libstdc++.modules.json)
@@ -112,8 +111,8 @@ done
 
 output_rule "$script" ""
 
-printf "build bin/$exe: link $objects std.cc.o\n" >> $ninjafile
-printf "default bin/$exe\n" >> $ninjafile 
+printf "build $exe: link $objects std.cc.o\n" >> $ninjafile
+printf "default $exe\n" >> $ninjafile
 
 fi
 
@@ -123,5 +122,5 @@ ninja -f $exe.ninja -t compdb cxx > compile_commands.json
 popd > /dev/null
 mv -f $cache_dir/compile_commands.json . || echo ""
 shift 1
-$cache_dir/bin/$exe $*
+$cache_dir/$exe $*
 fi

@@ -123,7 +123,7 @@ constexpr void warn(std::format_string<Args...> fmt, Args &&...args) {
                  std::format(fmt, std::forward<Args>(args)...));
 }
 template <typename... Args>
-constexpr void INFO(std::format_string<Args...> fmt, Args &&...args) {
+constexpr void info(std::format_string<Args...> fmt, Args &&...args) {
   if (level >= 2)
     std::println(stderr, "INFO: {}",
                  std::format(fmt, std::forward<Args>(args)...));
@@ -168,10 +168,15 @@ rule cxx
 rule link
   command = g++ $cxxflags $in -o $out
 
+)";
+
+constexpr std::string_view regenerate_rule = R"(
 rule regenerate_ninja
   command = crun build --configure $in
-
 )";
+
+constexpr std::string_view regenerate_bootstrap =
+    "rule regenerate_ninja\n  command = " CRUN_ROOT "/bootstrap.sh $in\n";
 
 void scan_deps(auto out, fs::path);
 void output_rule(auto out, fs::path src, std::string_view include);
@@ -193,17 +198,21 @@ void build_cmd(auto const &args, std::size_t col) {
   auto script_path = fs::absolute(script);
   auto ninja_path = cache / script_path.relative_path();
   ninja_path.replace_extension(".ninja");
-  std::println("ninja path: {}", ninja_path.string());
+  lg::info("Writing ninjafile to path: {}", ninja_path.string());
   fs::create_directories(ninja_path.parent_path());
   auto ninjafile = std::ofstream(ninja_path);
   auto ninja = std::ostreambuf_iterator(ninjafile);
 
   std::ranges::copy(ninja_prologue, ninja);
+  if (script != "crun") {
+    std::ranges::copy(regenerate_rule, ninja);
+  } else {
+    std::ranges::copy(regenerate_bootstrap, ninja);
+  }
   std::format_to(ninja, "build | {}: regenerate_ninja {}\n",
                  ninja_path.string(), script_path.string());
 
-  auto root = std::getenv("CRUN_ROOT");
-  scan_deps(ninja, fs::path(root) / "deps");
+  scan_deps(ninja, fs::path(CRUN_ROOT) / "deps");
 
   output_rule(ninja, script_path, "-I.");
 
@@ -298,18 +307,20 @@ void register_cmd(auto const &args, std::size_t col) {
   constexpr std::string_view reg_script = "#!/usr/bin/sh\nset -euo pipefail\n";
   std::ranges::copy(reg_script, reg);
   auto binary = (cache_dir() / script.relative_path()).replace_extension("");
-  auto ninja = binary;
-  ninja.replace_extension(".ninja");
   if (shim_name != "crun") {
     std::format_to(reg,
                    "if [ ! -f {} ];then\n crun build --configure {};\nfi\n",
-                   ninja.string(), script.string());
+                   binary.string(), script.string());
   } else {
+    // This has to be hardcoded otherwise it will continuously call itself
     auto root = script.parent_path();
-    std::format_to(
-        reg, "if [ ! -f {0} ];then\n {1}/bootstrap.sh {1}/crun.cpp;\nfi\n",
-        ninja.string(), root.string());
+    std::format_to(reg,
+                   "if [ ! -f {0} ];then\n  {1}/bootstrap.sh "
+                   "{1}/crun.cpp;\nfi\n",
+                   binary.string(), root.string());
   }
+  auto ninja = binary;
+  ninja.replace_extension(".ninja");
   std::format_to(reg, "ninja --quiet -C {} -f {}\n", cache_dir().string(),
                  ninja.string());
   std::format_to(reg, "{} $@ ", binary.string());

@@ -34,7 +34,7 @@ done
 
 cat > $ninjafile  <<EOF
 #shellgen
-cxxflags = -std=c++23 -fmodules -O3 -Wall -flto=auto -march=native
+cxxflags = -std=c++23 -fmodules -O3 -Wall -flto=auto -march=native -DCRUN_ROOT=\"$(realpath .)\"
 
 rule cxx
   command = g++ \$cxxflags \$includes \$depflags -x c++ -c \$in -o \$out

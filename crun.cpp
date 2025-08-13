@@ -136,7 +136,7 @@ void app(Args const &args) {
   winsize w;
   ioctl(STDOUT_FILENO, TIOCGWINSZ, &w);
   if (help)
-    std::println("Help asked for!");
+    std::println("{}", cli_parser.help({.cols = w.ws_col}));
   if (ru)
     run_cmd(*ru, w.ws_col);
   if (bu)

@@ -136,8 +136,10 @@ void app(Args const &args) {
   // todo crossplatform?
   winsize w;
   ioctl(STDOUT_FILENO, TIOCGWINSZ, &w);
-  if (help)
-    std::println("{}", cli_parser.help({.cols = w.ws_col}, 0_tag));
+  if (help) {
+    auto h = cli_parser.help({.cols = w.ws_col}, 0_tag);
+    std::puts(h.c_str());
+  }
   if (ru)
     run_cmd(*ru, w.ws_col);
   if (bu)
@@ -150,6 +152,9 @@ void app(Args const &args) {
     bin_cmd(*bi);
 }
 
+fs::path configure(std::string const &script, bool compdb,
+                   std::string const &compdb_path, bool build);
+
 void run_cmd(auto const &args, std::size_t col) {
   auto &[help, script, verbosity, compdb, compdb_path] = args;
   if (help) {
@@ -158,6 +163,11 @@ void run_cmd(auto const &args, std::size_t col) {
     return;
   }
   lg::level = verbosity;
+
+  auto bin = configure(script, compdb, compdb_path, true);
+  auto b = bin.string();
+  auto result = sp::check_output({b.c_str()});
+  std::print("{:s}", result.buf);
 }
 
 constexpr std::string_view ninja_prologue = R"(
@@ -183,7 +193,7 @@ void scan_deps(auto out, fs::path);
 void output_rule(auto out, fs::path src, std::string_view include);
 
 void build_cmd(auto const &args, std::size_t col) {
-  auto &[help, verbosity, flags, compdb, compdb_path, rebuild, configure,
+  auto &[help, verbosity, flags, compdb, compdb_path, rebuild, configure_only,
          script] = args;
   if (help) {
     auto h = cli_parser.help({.cols = col}, 2_tag);
@@ -194,44 +204,54 @@ void build_cmd(auto const &args, std::size_t col) {
   if (script.empty()) {
     throw Str("Specify a script to build");
   }
+  configure(script, compdb, compdb_path, !configure_only);
+}
 
+fs::path configure(std::string const &script, bool compdb,
+                   std::string const &compdb_path, bool build) {
   fs::path cache = cache_dir();
   auto script_path = fs::absolute(script);
   auto ninja_path = cache / script_path.relative_path();
-  ninja_path.replace_extension(".ninja");
-  lg::info("Writing ninjafile to path: {}", ninja_path.string());
-  fs::create_directories(ninja_path.parent_path());
-  auto ninjafile = std::ofstream(ninja_path);
-  auto ninja = std::ostreambuf_iterator(ninjafile);
-
-  std::ranges::copy(ninja_prologue, ninja);
-  if (script != "crun") {
-    std::ranges::copy(regenerate_rule, ninja);
-  } else {
-    std::ranges::copy(regenerate_bootstrap, ninja);
-  }
-  std::format_to(ninja, "build | {}: regenerate_ninja {}\n",
-                 ninja_path.string(), script_path.string());
-
-  scan_deps(ninja, fs::path(CRUN_ROOT) / "deps");
-
-  output_rule(ninja, script_path, "-I.");
-
   auto output_name = fs::path(script).stem();
-
-  auto obj = cache / script_path.relative_path();
-  obj += ".o";
-
   auto out_name =
-      (cache / script_path.parent_path().relative_path() / output_name)
-          .string();
-  std::format_to(ninja, "build {}: link {}\n", out_name, obj.string());
-  std::format_to(ninja, "default {}\n", out_name);
+      cache / script_path.parent_path().relative_path() / output_name;
+  ninja_path.replace_extension(".ninja");
+  {
+    lg::info("Writing ninjafile to path: {}", ninja_path.string());
+    fs::create_directories(ninja_path.parent_path());
+    auto ninjafile = std::ofstream(ninja_path);
+    auto ninja = std::ostreambuf_iterator(ninjafile);
 
-  if (!configure) {
-    auto s = ninja_path.string();
-    sp::call({"ninja", "--quiet", "-f", s.c_str()});
+    std::ranges::copy(ninja_prologue, ninja);
+    if (script != "crun") {
+      std::ranges::copy(regenerate_rule, ninja);
+    } else {
+      std::ranges::copy(regenerate_bootstrap, ninja);
+    }
+    std::format_to(ninja, "build | {}: regenerate_ninja {}\n",
+                   ninja_path.string(), script_path.string());
+
+    scan_deps(ninja, fs::path(CRUN_ROOT) / "deps");
+
+    output_rule(ninja, script_path, "-I.");
+
+    auto obj = cache / script_path.relative_path();
+    obj += ".o";
+
+    std::format_to(ninja, "build {}: link {}\n", out_name.string(),
+                   obj.string());
+    std::format_to(ninja, "default {}\n", out_name.string());
   }
+
+  if (build) {
+    auto s = ninja_path.string();
+    auto c = cache.string();
+    lg::info("running ninja on {}", s);
+    auto out = sp::check_output({"ninja", "-C", c.c_str(), "-f", s.c_str()});
+    lg::info("ninja output: {:s}", out.buf);
+  }
+
+  return out_name;
 }
 
 void scan_deps(auto out, fs::path depdir) {

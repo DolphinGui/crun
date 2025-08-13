@@ -15,9 +15,11 @@ exe="./${script%.*}"
 this_script=$(realpath $0)
 REGENERATE="${REGENERATE:-0}"
 mkdir -p $(dirname "$cache_dir/$exe")
-pushd $cache_dir > /dev/null
+crun_root=$(dirname $(realpath $0))
+
 
 if [ ! -f "$cache_dir/$exe.ninja" ] || [ ! "$REGENERATE" = 0 ]; then
+pushd $cache_dir > /dev/null
 if [ ! "$REGENERATE" = 0 ]; then
   ninjafile="/dev/stdout"
 else
@@ -34,7 +36,7 @@ done
 
 cat > $ninjafile  <<EOF
 #shellgen
-cxxflags = -std=c++23 -fmodules -O3 -Wall -flto=auto -march=native -DCRUN_ROOT=\"$(realpath .)\"
+cxxflags = -std=c++23 -fmodules -O3 -Wall -flto=auto -march=native -DCRUN_ROOT=\"$crun_root\"
 
 rule cxx
   command = g++ \$cxxflags \$includes \$depflags -x c++ -c \$in -o \$out
@@ -114,13 +116,12 @@ output_rule "$script" ""
 printf "build $exe: link $objects std.cc.o\n" >> $ninjafile
 printf "default $exe\n" >> $ninjafile
 
+popd > /dev/null
 fi
 
 if [ "$REGENERATE" = 0 ]; then
-ninja -f $exe.ninja --quiet
-ninja -f $exe.ninja -t compdb cxx > compile_commands.json
-popd > /dev/null
-mv -f $cache_dir/compile_commands.json . || echo ""
+ninja -f $exe.ninja -C $cache_dir --quiet
+ninja -f $exe.ninja -C $cache_dir -t compdb cxx > $crun_root/compile_commands.json
 shift 1
 $cache_dir/$exe $*
 fi

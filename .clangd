@@ -1,2 +1,2 @@
 CompileFlags:
-    Remove: [-fsearch-include-path]
+    Remove: [-fsearch-include-path, -Mno-modules]

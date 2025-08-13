@@ -17,6 +17,7 @@ using clip::flag;
 using clip::none;
 using clip::positional;
 using clip::Subcommand;
+using namespace clip::literals;
 
 using Str = std::string;
 
@@ -136,7 +137,7 @@ void app(Args const &args) {
   winsize w;
   ioctl(STDOUT_FILENO, TIOCGWINSZ, &w);
   if (help)
-    std::println("{}", cli_parser.help({.cols = w.ws_col}));
+    std::println("{}", cli_parser.help({.cols = w.ws_col}, 0_tag));
   if (ru)
     run_cmd(*ru, w.ws_col);
   if (bu)
@@ -152,7 +153,7 @@ void app(Args const &args) {
 void run_cmd(auto const &args, std::size_t col) {
   auto &[help, script, verbosity, compdb, compdb_path] = args;
   if (help) {
-    auto h = run.help({.cols = col});
+    auto h = cli_parser.help({.cols = col}, 1_tag);
     std::puts(h.c_str());
     return;
   }
@@ -185,7 +186,7 @@ void build_cmd(auto const &args, std::size_t col) {
   auto &[help, verbosity, flags, compdb, compdb_path, rebuild, configure,
          script] = args;
   if (help) {
-    auto h = build.help({.cols = col});
+    auto h = cli_parser.help({.cols = col}, 2_tag);
     std::puts(h.c_str());
     return;
   }
@@ -292,7 +293,7 @@ void output_rule(auto out, fs::path src, std::string_view include) {
 void register_cmd(auto const &args, std::size_t col) {
   auto &[help, name, impl_args, del, list, script_name] = args;
   if (help) {
-    auto h = reg.help({.cols = col});
+    auto h = cli_parser.help({.cols = col}, 3_tag);
     std::puts(h.c_str());
     return;
   }
@@ -335,7 +336,7 @@ void register_cmd(auto const &args, std::size_t col) {
 void completions_cmd(auto const &args, std::size_t col) {
   auto &[help, shell] = args;
   if (help) {
-    auto h = comp.help({.cols = col});
+    auto h = cli_parser.help({.cols = col}, 4_tag);
     std::puts(h.c_str());
     return;
   }

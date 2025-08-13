@@ -27,6 +27,10 @@ using tuplet::swap;
 using tuplet::tie;
 using tuplet::tuple_cat;
 
+namespace literals {
+using tuplet::literals::operator""_tag;
+}
+
 } // namespace tuplet
 
 export using std::tuple_size;

@@ -309,6 +309,16 @@ void output_rule(auto out, fs::path src, std::string_view include) {
   std::format_to(out, "\n\n");
 }
 
+constexpr std::string_view version_check = R"(
+gcc_version=$(gcc --version)
+cache_version=$(cat {0} || echo "")
+
+if [ ! "$gcc_version" = "$cache_version" ]; then
+  rm -rd {1}
+  echo "Refreshing stale cache"
+  gcc --version > {0}
+fi
+)";
 // Todo windows??
 void register_cmd(auto const &args, std::size_t col) {
   auto &[help, name, impl_args, del, list, script_name] = args;
@@ -334,11 +344,14 @@ void register_cmd(auto const &args, std::size_t col) {
                    binary.string(), script.string());
   } else {
     // This has to be hardcoded otherwise it will continuously call itself
+
     auto root = script.parent_path();
+    auto old_version = cache_dir() / ".cache_version";
     std::format_to(reg,
                    "if [ ! -f {0} ];then\n  {1}/bootstrap.sh "
                    "{1}/crun.cpp;\nfi\n",
                    binary.string(), root.string());
+    std::format_to(reg, version_check, old_version.string(), cache_dir().string());
   }
   auto ninja = binary;
   ninja.replace_extension(".ninja");
